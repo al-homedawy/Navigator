@@ -1,0 +1,582 @@
+package com.example.lab4_201_02;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
+
+import com.example.lab4_201_02.LineGraphView;
+
+import android.support.v7.app.ActionBarActivity;
+import android.support.v4.app.Fragment;
+import android.os.Bundle;
+import android.view.ContextMenu;
+import android.view.ContextMenu.ContextMenuInfo;
+import android.view.LayoutInflater;
+import android.view.Menu;
+import android.view.MenuItem;
+import android.view.View;
+import android.view.View.OnClickListener;
+import android.view.ViewGroup;
+import android.widget.Button;
+import android.widget.LinearLayout;
+import android.widget.TextView;
+import android.app.AlertDialog;
+import android.content.Context;
+import android.content.DialogInterface;
+import android.graphics.PointF;
+import android.hardware.Sensor;
+import android.hardware.SensorEvent;
+import android.hardware.SensorEventListener;
+import android.hardware.SensorManager;
+
+class Position implements PositionListener 
+{
+	// Debugging variable
+	static Context applicationContext;
+	
+	// Keep track of key positions
+	static PointF origin;
+	static PointF destination;
+	
+	// Debugging function
+	@SuppressWarnings("unused")
+	private void dbg ( String msg )
+	{
+		AlertDialog.Builder msgBox = new AlertDialog.Builder ( applicationContext );
+		msgBox.setNegativeButton("Okay", new DialogInterface.OnClickListener () {
+			public void onClick(DialogInterface dialog, int which) {
+				// TODO Auto-generated method stub
+				
+			}
+		});
+		msgBox.setMessage(msg);
+		msgBox.show ();
+	}
+	
+	// Calculate the shortest path
+	static List<PointF> shortestPath ( MapView source )
+	{
+		// The most efficient path to take
+		ArrayList<PointF> path = new ArrayList<PointF> ();
+		
+		// The current obstacles
+		ArrayList<PointF> obstacles = new ArrayList<PointF> ();
+		
+		// Consider the origin as an obstacle
+		obstacles.add(origin);
+		
+		// Obtain the obstacles from the origin to destination
+		List<InterceptPoint> walls = source.map.calculateIntersections(origin, destination);
+		
+		// Convert the intercept points into points on graph
+		for ( InterceptPoint Point : walls )
+			obstacles.add(Point.getPoint());
+		
+		// Add the destination to the obstacles
+		obstacles.add(destination);
+		
+		// After receiving the points, adjust each point so each point has
+		// a path with no obstacles in between
+		for ( int i = 0; i < obstacles.size(); i ++  )
+		{		
+			// We don't need to adjust destination
+			if ( (i+1) == ( obstacles.size () ) )
+				break;
+			
+			// Obtain the reference and next points
+			PointF reference = obstacles.get(i);
+			PointF next = obstacles.get(i+1);
+			
+			// If we handling the second-last and destination,
+			// we move the second-last instead of destination.			
+			if ( (i+1) == ( obstacles.size() - 1))
+			{
+				PointF tmp = reference;
+				reference = next;
+				next = tmp;
+			}
+			
+			// Adjust the next point
+			while ( source.map.calculateIntersections(reference, next).size() > 0 )
+				next.y += 1;
+		}		
+		
+		// Display the path
+		source.setUserPath (obstacles);
+		
+		return path;
+	}
+
+	// Handle origin changes.
+	public void originChanged(MapView source, PointF loc) 
+	{
+		// Update 'origin'
+		origin = loc;
+		
+		// Set the reference point
+		source.setUserPoint(loc);		
+		
+		// If destination is already initialized,
+		// find the most-efficient path
+		if ( destination != null )
+			shortestPath ( source );
+	}
+
+	// Handle position changes.
+	public void destinationChanged(MapView source, PointF dest) {
+		// Update 'destination'
+		destination = dest;
+		
+		// Display the most-efficient path
+		shortestPath ( source );
+	}
+	
+	public Position ()
+	{
+		// Setup variables
+		origin = null;
+		destination = null;
+		applicationContext = null;
+	}
+}
+
+class StepOrientation implements SensorEventListener {
+	// Layouts
+	private TextView bearingDisplay = null;
+	
+	// Multipliers for both axe's
+	private float vertMultiply = 1.0f;
+	private float horizMultiply = 1.0f;
+	
+	// Displacement Information
+	static float NorthCounter = 0.0f;
+	static float EastCounter = 0.0f;
+	
+	// Current heading 
+	static float currentHeading = 0.0f;
+	
+	// Orientation Data
+	private float mGravity [] = null;
+	private float mGeomagnetic [] = null;
+	
+	// Steps
+	static int steps;
+
+	// Go through with a step
+	static boolean stepSuccess = false;
+	
+	// Number of steps to be recorded per sequence
+	private final int maxPoints = 75;
+		
+	// This list keeps track of all our 'Y'
+	// values.
+	private ArrayList<Float> listY = new ArrayList<Float> ();
+	private ArrayList<Float> listZ = new ArrayList<Float> ();
+	
+	private String locateBearing ( float bearing )
+	{
+		if ( bearing < 90 )
+		{
+			if ( bearing < ( 90 - 80 ) )
+				return "N";
+			else if ( bearing > (90 - 10) )
+				return "E";
+			else if ( bearing < (90 - 45) )
+				return "NE";
+			else if ( bearing > (90 - 45) )
+				return "ENE";
+		}
+		else if ( bearing < 180 )
+		{
+			if ( bearing < ( 180 - 80 ) )
+				return "E";
+			else if ( bearing > (180 - 10) )
+				return "S";
+			else if ( bearing < (180 - 45) )
+				return "ESE";
+			else if ( bearing > (180 - 45) )
+				return "SE";
+		}
+		else if ( bearing < 270 )
+		{
+			if ( bearing < ( 270 - 80 ) )
+				return "S";
+			else if ( bearing > (270 - 10) )
+				return "W";
+			else if ( bearing < (270 - 45) )
+				return "SSW";
+			else if ( bearing > (270 - 45) )
+				return "WSW";
+		}
+		else 
+		{
+			if ( bearing < ( 360 - 80 ) )
+				return "W";
+			else if ( bearing > (360 - 10) )
+				return "N";
+			else if ( bearing < (360 - 45) )
+				return "WNW";
+			else if ( bearing > (360 - 45) )
+				return "NWW";
+		}
+		
+		// Something wrong happened?
+		return "";
+	}
+		
+	// Use our sensor value to determine if
+	// the user has made a step.
+	// Record all the Y values from the beginning
+	// of the wave (Y=0) to the end of the wave (Y=0).
+	private boolean checkForStep ( float[] values )
+	{		
+		// The concept of this method is to collect 
+		// 'maxPoints' number of elements then analyze that
+		// data to see if there was an occurrence of a step.
+		if ( listY.size () < maxPoints )
+		{
+			listY.add(values [1]);
+			listZ.add(values [2]);
+		}
+		// After we've collected data we analyze it
+		else
+		{
+			// Obtain the extremities in the graph for Y
+			float maxY = Collections.max ( listY );
+			float minY = Collections.min ( listY );
+			
+			// Obtain the extremities in the graph for Y
+			float maxZ = Collections.max ( listZ );
+			float minZ = Collections.min ( listZ );
+			
+			// Clear the data after we've recorded the
+			// extremities to prepare for the next set 
+			// of data.
+			listY.clear ();
+			listZ.clear ();
+			
+			// This check ensures there is sufficient movement in the Y
+			// direction.
+			boolean YStep = ( maxY - minY ) >= 1.2 ? true : false;
+			
+			// This check ensures there is a significant step in the Z
+			// direction.
+			boolean ZStep = ( maxZ - minZ ) >= 2.5 ? true : false;
+			
+			if ( YStep && ZStep )			
+				// Count the step
+				return true;
+		}
+						
+		return false;
+	}
+	
+	public void onAccuracyChanged ( Sensor sensor, int accuracy )
+	{
+		// We don't need this for
+		// now.
+	}
+	
+	public void onSensorChanged(SensorEvent event) {		
+		// Compute the orientation
+		if ( event.sensor.getType () == Sensor.TYPE_ACCELEROMETER )
+			if ( mGravity == null )
+				mGravity = event.values;
+		
+		if ( event.sensor.getType() == Sensor.TYPE_LINEAR_ACCELERATION )
+		{						
+			// Pass the data received from the sensor
+			// to our 'checkForStep' func.
+			if ( checkForStep ( event.values ) )
+			{
+				// Increment step counter.
+				++steps;
+				
+				// Setup 'stepSuccess'.
+				stepSuccess = ( Position.origin == null && Position.destination == null ) ? false :
+																							 true;
+			}
+		}
+		
+		// Update Orientation.
+		if ( event.sensor.getType() == Sensor.TYPE_MAGNETIC_FIELD )
+			if ( mGeomagnetic == null )
+				mGeomagnetic = event.values;
+					
+		if ( mGravity != null && mGeomagnetic != null )
+		{
+			float R[] = new float [9];
+			float I[] = new float [9];
+							
+			if ( SensorManager.getRotationMatrix(R, I, mGravity, mGeomagnetic) )
+			{
+				// Obtain the orientation
+				float orientation [] = new float [3];
+				SensorManager.getOrientation ( R, orientation );
+				
+				// Obtain heading in degrees.
+				float heading = (float) Math.toDegrees ( 
+								( (orientation [0] < 0) ? (2 * Math.PI + orientation [0]) : 
+														orientation [0] ) );
+				
+				// Update 'currentHeading'
+				currentHeading = heading;
+				
+				// Adjust the displacement respectively.
+				if ( stepSuccess )
+				{					
+					// Adjust the heading based on its quadrant.
+					if ( currentHeading < 90 )
+					{
+						vertMultiply = 1.0f;
+						horizMultiply = 1.0f;
+					}
+					else if ( currentHeading < 180 )
+					{
+						vertMultiply = 1.0f;
+						horizMultiply = -1.0f;
+					}
+					else if ( currentHeading < 270 )
+					{
+						vertMultiply = -1.0f;
+						horizMultiply = -1.0f;
+					}
+					else if ( currentHeading < 360 )
+					{
+						vertMultiply = -1.0f;
+						horizMultiply = 1.0f;
+					}
+					
+					// Break the step down into components
+					double sin = Math.abs ( Math.sin ( Math.toRadians ( currentHeading ) ) );
+					double cos = Math.abs ( Math.cos ( Math.toRadians ( currentHeading ) ) );
+					
+					// Calculate displacement
+					if ( currentHeading < 90 )
+					{
+						// Adjust the counters
+						NorthCounter +=  sin * vertMultiply;
+						EastCounter += cos * horizMultiply;
+					}
+					else if ( currentHeading < 180 )
+					{
+						// Adjust the counters
+						NorthCounter += cos * vertMultiply;
+						EastCounter += sin * horizMultiply;
+					}
+					else if ( currentHeading < 270 )
+					{
+						// Adjust the counters
+						NorthCounter += sin * vertMultiply;
+						EastCounter += cos * horizMultiply;
+					}
+					else
+					{
+						// Adjust the counters
+						NorthCounter += cos * vertMultiply;
+						EastCounter += sin * horizMultiply;
+					}
+					
+					// Calculate 'x' and 'y' from displacement
+					float x = Position.origin.x;
+					float y = Position.origin.y;
+					
+					// Update 'x' and 'y' from displacement
+					x += NorthCounter;
+					y += EastCounter;
+					
+					// Finally, update user position
+					MainActivity.mapView.setUserPoint(x, y);
+					
+					// Reset 'stepSuccess'
+					stepSuccess = false;
+				}
+					
+				// Reset orientation data
+				mGravity = null;
+				mGeomagnetic = null;
+			}
+		}
+		
+		// Display the current bearing
+		bearingDisplay.setText( String.format("Current bearing %.2f %s", 
+														 currentHeading, 
+														 locateBearing ( currentHeading ) ) );
+	}
+	
+	public StepOrientation ( TextView bearing )
+	{
+		// Initialize our variables
+		bearingDisplay = bearing;
+		steps = 0;
+	}
+}
+
+public class MainActivity extends ActionBarActivity 
+{
+	static MapView mapView;
+	
+	// Main-Entry point.
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {		
+    	// Setup the application
+    	super.onCreate(savedInstanceState);
+    	setContentView(R.layout.activity_main);
+		
+    	// Create an instance of MapView
+        mapView = new MapView ( getApplicationContext(), 800, 800, 30, 30 );
+        
+    	// Register the menu for our map
+    	registerForContextMenu ( mapView );
+    	
+    	// Load the map
+        NavigationalMap map = MapLoader.loadMap ( getExternalFilesDir ( null ), 
+        										  "Lab-room-peninsula.svg" );
+  
+        // Set the map
+        mapView.setMap ( map );
+        
+     	// Add the listener
+    	mapView.addListener(new Position ());
+                
+        if (savedInstanceState == null) {
+            getSupportFragmentManager().beginTransaction()
+                    .add(R.id.container, new PlaceholderFragment())
+                    .commit();
+        }
+    }
+    
+    @Override
+    public void onCreateContextMenu(ContextMenu menu, View v, ContextMenuInfo menuInfo) 
+    {
+    	super.onCreateContextMenu(menu, v, menuInfo);
+    	mapView.onCreateContextMenu(menu, v, menuInfo);
+    }
+    
+    @Override
+    public boolean onContextItemSelected(MenuItem item) {
+    	return super.onContextItemSelected(item) || mapView.onContextItemSelected (item);
+    }
+
+    @Override
+    public boolean onCreateOptionsMenu(Menu menu) {
+        // Inflate the menu; this adds items to the action bar if it is present.
+        getMenuInflater().inflate(R.menu.main, menu);
+        return true;
+    }
+
+    @Override
+    public boolean onOptionsItemSelected(MenuItem item) {
+        // Handle action bar item clicks here. The action bar will
+        // automatically handle clicks on the Home/Up button, so long
+        // as you specify a parent activity in AndroidManifest.xml.
+        int id = item.getItemId();
+        if (id == R.id.action_settings) {
+            return true;
+        }
+        return super.onOptionsItemSelected(item);
+    }
+
+    /**
+     * A placeholder fragment containing a simple view.
+     */
+    public static class PlaceholderFragment extends Fragment {
+
+        public PlaceholderFragment() {
+        	
+        }
+
+        @Override
+        public View onCreateView(LayoutInflater inflater, ViewGroup container,
+                Bundle savedInstanceState) {
+        	
+        	// Create an instance to our view
+            View rootView = inflater.inflate(R.layout.fragment_main, container, false);
+            
+            // Setup 'applicationContext'
+            Position.applicationContext = rootView.getContext ();
+            
+            // Update the header
+            TextView Credits = (TextView) rootView.findViewById (R.id.credits);
+            Credits.setText("Group 2, Section 201 -Lab 4");
+            
+            // Obtain an instance to our layout and set orientation
+            LinearLayout layout = (LinearLayout) rootView.findViewById ( R.id.layout );
+            layout.setOrientation(LinearLayout.VERTICAL);
+            
+            // Create a bearing layout
+            TextView bearing = new TextView ( rootView.getContext () );
+            bearing.setText("bearing");
+            
+            // Create a Stimulate button.
+            Button Stimulate = new Button ( rootView.getContext () );
+            Stimulate.setText("Walk");
+            Stimulate.setOnClickListener( new OnClickListener () {
+            	public void onClick ( View v )
+            	{
+            		// Stimulate a step
+            		StepOrientation.stepSuccess = ( Position.origin == null && 
+            										Position.destination == null ) ? false : true;
+            	}
+            });
+            
+            // Create a Reset button.
+            Button Reset = new Button ( rootView.getContext () );
+            Reset.setText("Reset");
+            Reset.setOnClickListener( new OnClickListener () {
+            	public void onClick ( View v )
+            	{
+            		// Reset information
+            		StepOrientation.EastCounter = 0;
+            		StepOrientation.NorthCounter = 0;
+            		StepOrientation.steps = 0;
+            		StepOrientation.stepSuccess = false;
+            		
+            		if ( ( mapView != null ) && 
+            			 ( Position.origin != null ) &&
+            			 ( Position.destination != null ) )
+            		{
+	            		Position.origin.x = 0;
+	            		Position.origin.y = 0;
+	            		Position.destination.x = 0;
+	            		Position.destination.y = 0;
+	            		mapView.setOriginPoint(Position.origin);
+	            		mapView.setUserPoint(Position.origin);
+	            		mapView.setDestinationPoint(Position.destination);
+	            		Position.shortestPath ( mapView );
+            		}
+            	}
+            });
+            
+            // Add our views to the layout
+            layout.addView( mapView );
+            layout.addView( Stimulate );
+            layout.addView( Reset );
+            layout.addView( bearing );
+            
+            // Create an instance of our event callback's
+            SensorEventListener stepAndHeading = new StepOrientation ( bearing );
+            
+            // Request permission to manipulate sensors
+            SensorManager sensorManager = (SensorManager) 
+            		rootView.getContext().getSystemService ( SENSOR_SERVICE );
+            
+            // Create a sensor to handle the accelerometer
+            Sensor accel = sensorManager.getDefaultSensor(Sensor.TYPE_LINEAR_ACCELERATION);
+            Sensor accelTwo = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
+            Sensor magnetic = sensorManager.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD);
+            
+            // Register our sensor
+            sensorManager.registerListener(stepAndHeading, accel, 
+            		SensorManager.SENSOR_DELAY_FASTEST);
+            sensorManager.registerListener(stepAndHeading, accelTwo, 
+            		SensorManager.SENSOR_DELAY_FASTEST);
+            sensorManager.registerListener(stepAndHeading, magnetic,
+            		SensorManager.SENSOR_DELAY_FASTEST);
+            
+            // Return
+            return rootView;
+        }
+    }
+}
